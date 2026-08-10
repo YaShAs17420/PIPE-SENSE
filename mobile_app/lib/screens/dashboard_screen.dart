@@ -29,13 +29,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     timer = Timer.periodic(
       const Duration(seconds: 5),
       (_) async {
-        final data = await SensorService.getCurrentSensorData();
-
-        if (mounted && data != null) {
-          setState(() {
-            sensorData = data;
-          });
-        }
+        await refreshSensorData();
       },
     );
   }
@@ -51,15 +45,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void changeMode(bool useEsp32) {
-    setState(() {
-      if (useEsp32) {
-        AppModeController.setMode(AppMode.esp32);
-      } else {
-        AppModeController.setMode(AppMode.simulation);
-      }
-    });
+    if (useEsp32) {
+      AppModeController.setMode(AppMode.esp32);
+    } else {
+      AppModeController.setMode(AppMode.simulation);
+    }
 
+    // Immediately get data from the newly selected mode
     refreshSensorData();
+
+    // Rebuild the interface so the mode text changes
+    setState(() {});
   }
 
   @override
@@ -76,12 +72,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       appBar: AppBar(
         title: const Text('PIPE-SENSE'),
       ),
-
       body: SingleChildScrollView(
         child: Center(
           child: Column(
             children: [
-
               const SizedBox(height: 40),
 
               const Text(
@@ -120,9 +114,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       const SizedBox(height: 8),
 
                       Text(
-                        isEsp32
-                            ? 'ESP32 mode'
-                            : 'Simulation mode',
+                        isEsp32 ? 'ESP32 mode' : 'Simulation mode',
                         style: const TextStyle(
                           fontSize: 18,
                         ),
