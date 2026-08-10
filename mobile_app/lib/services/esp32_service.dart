@@ -5,7 +5,7 @@ import '../models/sensor_data.dart';
 
 class Esp32Service {
   // We will replace this with the actual ESP32 address later.
-  static const String esp32Url = 'http://192.168.4.1/data';
+  static const String esp32Url = 'http://127.0.0.1:5000/data';
 
   static Future<SensorData?> getSensorData() async {
     try {
