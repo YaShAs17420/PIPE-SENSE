@@ -1,15 +1,17 @@
 class SensorData {
-  final double pressure;
-  final double flowRate;
-  final String vibration;
+  final double yfFlowRate;
+  final double zjFlowRate;
+  final double vibration1;
+  final double vibration2;
   final bool leakDetected;
-  final double? leakLocation;
+  final String? leakZone;
 
   const SensorData({
-    required this.pressure,
-    required this.flowRate,
-    required this.vibration,
+    required this.yfFlowRate,
+    required this.zjFlowRate,
+    required this.vibration1,
+    required this.vibration2,
     required this.leakDetected,
-    this.leakLocation,
+    this.leakZone,
   });
 }
