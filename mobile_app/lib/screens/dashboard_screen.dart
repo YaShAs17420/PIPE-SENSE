@@ -4,969 +4,1469 @@ import 'package:flutter/material.dart';
 
 import '../models/sensor_data.dart';
 import '../services/app_mode.dart';
+import '../services/leak_detection_service.dart';
 import '../services/sensor_service.dart';
-import '../widgets/three_scene_view_web.dart';
 import '../widgets/three_scene_controller.dart';
+import '../widgets/three_scene_view.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({
+    super.key,
+  });
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  State<DashboardScreen> createState() =>
+      _DashboardScreenState();
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  late SensorData sensorData;
+  int selectedTab = 0;
 
-  Timer? timer;
+  bool isDark = false;
+
+  Timer? sensorTimer;
+
+  SensorData sensorData = const SensorData(
+    yfFlowRate: 2.6,
+    zjFlowRate: 2.5,
+    vibration1: 1.0,
+    vibration2: 1.1,
+    leakDetected: false,
+  );
 
   @override
   void initState() {
     super.initState();
 
-    sensorData = SensorService.getSensorData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshSensors();
+    });
 
-    _sendSensorStateToThreeJs();
-
-    timer = Timer.periodic(
+    sensorTimer = Timer.periodic(
       const Duration(seconds: 5),
-      (_) async {
-        await refreshSensorData();
+      (_) {
+        _refreshSensors();
       },
     );
   }
 
-  Future<void> refreshSensorData() async {
-    final data = await SensorService.getCurrentSensorData();
+  @override
+  void dispose() {
+    sensorTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshSensors() async {
+    final SensorData? data =
+        await SensorService.getCurrentSensorData();
 
     if (!mounted || data == null) {
       return;
     }
 
+    final SensorData result =
+        LeakDetectionService.analyze(data);
+
     setState(() {
-      sensorData = data;
+      sensorData = result;
     });
 
-    _sendSensorStateToThreeJs();
-  }
-
-  void _sendSensorStateToThreeJs() {
     ThreeSceneController.updateSensorState(
-      yfFlowRate: sensorData.yfFlowRate,
-      zjFlowRate: sensorData.zjFlowRate,
-      vibration1: sensorData.vibration1,
-      vibration2: sensorData.vibration2,
-      leakDetected: sensorData.leakDetected,
-      leakZone: sensorData.leakZone,
+      yfFlowRate: result.yfFlowRate,
+      zjFlowRate: result.zjFlowRate,
+      vibration1: result.vibration1,
+      vibration2: result.vibration2,
+      leakDetected: result.leakDetected,
+      leakZone: result.leakZone,
+    );
+
+    ThreeSceneController.setTheme(
+      dark: isDark,
     );
   }
 
-  void changeMode(bool useEsp32) {
-    if (useEsp32) {
-      AppModeController.setMode(AppMode.esp32);
-    } else {
-      AppModeController.setMode(AppMode.simulation);
-    }
+  void _toggleTheme() {
+    setState(() {
+      isDark = !isDark;
+    });
 
-    refreshSensorData();
-
-    setState(() {});
+    ThreeSceneController.setTheme(
+      dark: isDark,
+    );
   }
 
-  @override
-  void dispose() {
-    timer?.cancel();
-    super.dispose();
+  Color get backgroundColor {
+    return isDark
+        ? const Color(0xFF07110D)
+        : const Color(0xFFF2F8F5);
+  }
+
+  Color get cardColor {
+    return isDark
+        ? const Color(0xFF0D1B15)
+        : Colors.white;
+  }
+
+  Color get borderColor {
+    return isDark
+        ? const Color(0xFF244438)
+        : const Color(0xFFD2E4DD);
+  }
+
+  Color get primaryText {
+    return isDark
+        ? Colors.white
+        : const Color(0xFF10231C);
+  }
+
+  Color get secondaryText {
+    return isDark
+        ? const Color(0xFF91A79E)
+        : const Color(0xFF687B73);
+  }
+
+  Color get accentColor {
+    return isDark
+        ? const Color(0xFF63DFA8)
+        : const Color(0xFF179B72);
+  }
+
+  Color get waterColor {
+    return isDark
+        ? const Color(0xFF27C7EE)
+        : const Color(0xFF159FC9);
+  }
+
+  Color get dangerColor {
+    return isDark
+        ? const Color(0xFFFF596A)
+        : const Color(0xFFE9475B);
   }
 
   @override
   Widget build(BuildContext context) {
-    final bool isEsp32 = AppModeController.isEsp32;
-    final bool leakDetected = sensorData.leakDetected;
-
-    final String zone =
-        sensorData.leakZone ?? 'Location unavailable';
-
-    final double flowDifference =
-        sensorData.yfFlowRate - sensorData.zjFlowRate;
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F8F4),
+      backgroundColor: backgroundColor,
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(isEsp32, leakDetected),
-            Expanded(
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(
-                  24,
-                  12,
-                  24,
-                  120,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildHeroSection(),
+        child: _buildCurrentPage(),
+      ),
+      bottomNavigationBar:
+          _buildBottomNavigation(),
+    );
+  }
 
-                    const SizedBox(height: 18),
+  Widget _buildCurrentPage() {
+    if (selectedTab == 1) {
+      return _buildMonitorPage();
+    }
 
-                    // --------------------------------------------------
-                    // 3D PIPE NETWORK
-                    // --------------------------------------------------
+    if (selectedTab == 2) {
+      return _buildZonesPage();
+    }
 
-                    Container(
-                      height: 520,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFDCEFE4),
-                        borderRadius: BorderRadius.circular(32),
-                        boxShadow: [
-                          BoxShadow(
-                            blurRadius: 30,
-                            spreadRadius: 0,
-                            offset: const Offset(0, 12),
-                            color: Colors.black.withValues(alpha: 0.06),
-                          ),
-                        ],
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Stack(
-                        children: [
-                          const Positioned.fill(
-                            child: ThreeSceneView(),
-                          ),
+    if (selectedTab == 3) {
+      return _buildSettingsPage();
+    }
 
-                          Positioned(
-                            top: 22,
-                            left: 22,
-                            child: _pill(
-                              icon: Icons.view_in_ar_rounded,
-                              text: '3D PIPE NETWORK',
-                            ),
-                          ),
+    return _buildHomePage();
+  }
 
-                          Positioned(
-                            top: 22,
-                            right: 22,
-                            child: _pill(
-                              icon: Icons.account_tree_rounded,
-                              text: '3 ZONES',
-                            ),
-                          ),
+  // ============================================================
+  // HOME PAGE
+  // ============================================================
 
-                          Positioned(
-                            left: 22,
-                            bottom: 22,
-                            child: _statusPill(leakDetected),
-                          ),
-                        ],
-                      ),
-                    ),
+  Widget _buildHomePage() {
+    return LayoutBuilder(
+      builder: (
+        BuildContext context,
+        BoxConstraints constraints,
+      ) {
+        final bool desktop =
+            constraints.maxWidth >= 900;
 
-                    const SizedBox(height: 24),
+        final double horizontalPadding =
+            desktop ? 32 : 18;
 
-                    _buildSensorCards(flowDifference),
-
-                    const SizedBox(height: 24),
-
-                    _buildAttentionCard(
-                      leakDetected,
-                      zone,
-                      isEsp32,
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    _buildZoneSection(),
-
-                    const SizedBox(height: 24),
-
-                    _buildSystemInformation(),
-
-                    const SizedBox(height: 24),
-
-                    _buildRefreshButton(),
-                  ],
-                ),
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            18,
+            horizontalPadding,
+            28,
+          ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 1500,
+              ),
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  _buildHeader(),
+                  const SizedBox(height: 18),
+                  _buildStatusCard(),
+                  const SizedBox(height: 18),
+                  _build3DCard(desktop),
+                  const SizedBox(height: 18),
+                  _buildMetrics(desktop),
+                  const SizedBox(height: 18),
+                  _buildFlowBalance(),
+                  const SizedBox(height: 18),
+                  _buildZonesPreview(),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
-      bottomNavigationBar: _buildBottomNavigation(),
-    );
-  }
-
-  Widget _buildTopBar(
-    bool isEsp32,
-    bool leakDetected,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        24,
-        18,
-        24,
-        8,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              color: const Color(0xFF10231A),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: const Icon(
-              Icons.water_drop_rounded,
-              color: Color(0xFF6BE3AA),
-              size: 30,
-            ),
           ),
-
-          const SizedBox(width: 14),
-
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'PIPE-SENSE',
-                  style: TextStyle(
-                    fontSize: 25,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                    color: Color(0xFF17231D),
-                  ),
-                ),
-                SizedBox(height: 3),
-                Text(
-                  'SMART WATER MONITORING',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.4,
-                    color: Color(0xFF718078),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 11,
-            ),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 9,
-                  height: 9,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: leakDetected
-                        ? const Color(0xFFFF4F6D)
-                        : const Color(0xFF2DCB83),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  leakDetected ? 'ALERT' : 'LIVE',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1,
-                    color: Color(0xFF34423A),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(width: 12),
-
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 8,
-            ),
-            decoration: BoxDecoration(
-              color: const Color(0xFF17251D),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'SIM',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white70,
-                  ),
-                ),
-                const SizedBox(width: 5),
-                Switch(
-                  value: isEsp32,
-                  onChanged: changeMode,
-                  activeThumbColor: const Color(0xFF6BE3AA),
-                  activeTrackColor: const Color(0xFF2C4B3B),
-                  inactiveThumbColor: Colors.white,
-                  inactiveTrackColor: const Color(0xFF53625A),
-                ),
-                const SizedBox(width: 5),
-                const Text(
-                  'ESP32',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white70,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeroSection() {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 24,
-        vertical: 22,
-      ),
-      decoration: BoxDecoration(
-        color: const Color(0xFF10231A),
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  sensorData.leakDetected
-                      ? 'ATTENTION REQUIRED'
-                      : 'EVERYTHING LOOKS GOOD',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.5,
-                    color: sensorData.leakDetected
-                        ? const Color(0xFFFF6C82)
-                        : const Color(0xFF6BE3AA),
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  sensorData.leakDetected
-                      ? 'Leak detected in ${sensorData.leakZone ?? 'unknown zone'}'
-                      : 'The pipeline is being monitored continuously.',
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  sensorData.leakDetected
-                      ? 'Check the highlighted leak zone and sensor readings.'
-                      : 'Flow and vibration sensors are reporting normal operation.',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.white60,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSensorCards(double flowDifference) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final bool compact = constraints.maxWidth < 850;
-
-        final List<Widget> cards = [
-          _sensorCard(
-            icon: Icons.water_drop_rounded,
-            iconBackground: const Color(0xFFE0F4FB),
-            iconColor: const Color(0xFF2BAEDB),
-            title: 'FLOW',
-            value:
-                '${sensorData.yfFlowRate.toStringAsFixed(1)} L/min',
-            subtitle: 'YF-S201 INLET',
-          ),
-          _sensorCard(
-            icon: Icons.compare_arrows_rounded,
-            iconBackground: const Color(0xFFECEEFF),
-            iconColor: const Color(0xFF7284F4),
-            title: 'FLOW BALANCE',
-            value:
-                '${flowDifference.clamp(0, double.infinity).toStringAsFixed(1)} L/min',
-            subtitle: 'INLET VS OUTLET',
-          ),
-          _sensorCard(
-            icon: Icons.graphic_eq_rounded,
-            iconBackground: const Color(0xFFE1F7EC),
-            iconColor: const Color(0xFF32C989),
-            title: 'VIBRATION',
-            value:
-                '${sensorData.vibration1.toStringAsFixed(1)} / ${sensorData.vibration2.toStringAsFixed(1)}',
-            subtitle: 'MPU6050 #1 / #2',
-          ),
-        ];
-
-        if (compact) {
-          return Column(
-            children: [
-              cards[0],
-              const SizedBox(height: 14),
-              cards[1],
-              const SizedBox(height: 14),
-              cards[2],
-            ],
-          );
-        }
-
-        return Row(
-          children: [
-            Expanded(child: cards[0]),
-            const SizedBox(width: 18),
-            Expanded(child: cards[1]),
-            const SizedBox(width: 18),
-            Expanded(child: cards[2]),
-          ],
         );
       },
     );
   }
 
-  Widget _sensorCard({
-    required IconData icon,
-    required Color iconBackground,
-    required Color iconColor,
-    required String title,
-    required String value,
-    required String subtitle,
-  }) {
-    return Container(
-      height: 165,
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              color: iconBackground,
-              borderRadius: BorderRadius.circular(18),
+  Widget _buildHeader() {
+    return Row(
+      children: [
+        Container(
+          width: 54,
+          height: 54,
+          decoration: BoxDecoration(
+            color: accentColor.withValues(
+              alpha: 0.14,
             ),
-            child: Icon(
-              icon,
-              color: iconColor,
-              size: 27,
-            ),
+            borderRadius:
+                BorderRadius.circular(17),
           ),
-
-          const SizedBox(width: 17),
-
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.1,
-                    color: Color(0xFF78857E),
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 25,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF18221D),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.6,
-                    color: Color(0xFF9AA59F),
-                  ),
-                ),
-              ],
-            ),
+          child: Icon(
+            Icons.water_drop_rounded,
+            color: accentColor,
+            size: 29,
           ),
-        ],
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              Text(
+                'PIPE-SENSE',
+                maxLines: 1,
+                overflow:
+                    TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: primaryText,
+                  fontSize: 27,
+                  fontWeight:
+                      FontWeight.w800,
+                  letterSpacing: -0.7,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                'SMART WATER MONITORING',
+                maxLines: 1,
+                overflow:
+                    TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: secondaryText,
+                  fontSize: 10,
+                  fontWeight:
+                      FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        _buildThemeButton(),
+      ],
+    );
+  }
+
+  Widget _buildThemeButton() {
+    return GestureDetector(
+      onTap: _toggleTheme,
+      child: Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius:
+              BorderRadius.circular(17),
+          border: Border.all(
+            color: borderColor,
+          ),
+        ),
+        child: Icon(
+          isDark
+              ? Icons.light_mode_rounded
+              : Icons.dark_mode_rounded,
+          color: accentColor,
+          size: 22,
+        ),
       ),
     );
   }
 
-  Widget _buildAttentionCard(
-    bool leakDetected,
-    String zone,
-    bool isEsp32,
-  ) {
+  Widget _buildStatusCard() {
+    final bool leak =
+        sensorData.leakDetected;
+
     return Container(
-      padding: const EdgeInsets.all(26),
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF10231A),
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  leakDetected
-                      ? 'ATTENTION REQUIRED'
-                      : 'SYSTEM STATUS',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.4,
-                    color: leakDetected
-                        ? const Color(0xFFFF6C82)
-                        : const Color(0xFF6BE3AA),
-                  ),
-                ),
-                const SizedBox(height: 9),
-                Text(
-                  leakDetected
-                      ? zone
-                      : 'Pipeline Normal',
-                  style: const TextStyle(
-                    fontSize: 27,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Text(
-                  leakDetected
-                      ? 'Check the highlighted leak zone and sensor readings.'
-                      : 'The pipeline is being monitored continuously.',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.white60,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(width: 20),
-
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 15,
-              vertical: 10,
-            ),
-            decoration: BoxDecoration(
-              color: const Color(0xFF26372F),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  isEsp32 ? 'ESP32' : 'SIMULATION',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white70,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  width: 9,
-                  height: 9,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isEsp32
-                        ? const Color(0xFF6BE3AA)
-                        : const Color(0xFF8B98FF),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildZoneSection() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'LEAK ZONES',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.4,
-              color: Color(0xFF77847D),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            '3 monitored zones',
-            style: TextStyle(
-              fontSize: 23,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF18221D),
-            ),
-          ),
-          const SizedBox(height: 18),
-
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final bool compact = constraints.maxWidth < 700;
-
-              final List<Widget> zones = [
-                _zoneCard(
-                  'ZONE 1',
-                  'MPU6050 #1',
-                  sensorData.leakZone == 'Zone 1',
-                ),
-                _zoneCard(
-                  'ZONE 2',
-                  'MPU6050 #2',
-                  sensorData.leakZone == 'Zone 2',
-                ),
-                _zoneCard(
-                  'ZONE 3',
-                  'MONITORED',
-                  sensorData.leakZone == 'Zone 3',
-                ),
-              ];
-
-              if (compact) {
-                return Column(
-                  children: [
-                    zones[0],
-                    const SizedBox(height: 12),
-                    zones[1],
-                    const SizedBox(height: 12),
-                    zones[2],
-                  ],
-                );
-              }
-
-              return Row(
-                children: [
-                  Expanded(child: zones[0]),
-                  const SizedBox(width: 12),
-                  Expanded(child: zones[1]),
-                  const SizedBox(width: 12),
-                  Expanded(child: zones[2]),
-                ],
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _zoneCard(
-    String name,
-    String sensor,
-    bool active,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: active
-            ? const Color(0xFFFFEEF1)
-            : const Color(0xFFF5F8F6),
-        borderRadius: BorderRadius.circular(20),
+        color: leak
+            ? dangerColor.withValues(
+                alpha: 0.07,
+              )
+            : cardColor,
+        borderRadius:
+            BorderRadius.circular(25),
         border: Border.all(
-          color: active
-              ? const Color(0xFFFF6C82)
-              : const Color(0xFFE8EEE9),
+          color: leak
+              ? dangerColor.withValues(
+                  alpha: 0.55,
+                )
+              : borderColor,
         ),
       ),
       child: Row(
         children: [
           Container(
-            width: 42,
-            height: 42,
+            width: 54,
+            height: 54,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: active
-                  ? const Color(0xFFFFD8DF)
-                  : const Color(0xFFDDF5E8),
+              color: (leak
+                      ? dangerColor
+                      : accentColor)
+                  .withValues(
+                alpha: 0.12,
+              ),
             ),
             child: Icon(
-              active
-                  ? Icons.warning_rounded
-                  : Icons.check_rounded,
-              color: active
-                  ? const Color(0xFFFF4F6D)
-                  : const Color(0xFF2DCB83),
+              leak
+                  ? Icons.warning_amber_rounded
+                  : Icons.verified_rounded,
+              color: leak
+                  ? dangerColor
+                  : accentColor,
+              size: 27,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
               children: [
                 Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
+                  leak
+                      ? 'Leak detected'
+                      : 'System normal',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 18,
+                    fontWeight:
+                        FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 5),
                 Text(
-                  sensor,
-                  style: const TextStyle(
+                  leak
+                      ? '${sensorData.leakZone ?? 'Zone 2'} requires attention'
+                      : 'Pipeline flow and vibration are within normal range',
+                  maxLines: 2,
+                  overflow:
+                      TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: secondaryText,
                     fontSize: 11,
-                    color: Color(0xFF87938C),
+                    height: 1.35,
                   ),
                 ),
               ],
             ),
           ),
-          Text(
-            active ? 'ALERT' : 'OK',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              color: active
-                  ? const Color(0xFFFF4F6D)
-                  : const Color(0xFF2DCB83),
+          if (leak) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(
+                horizontal: 9,
+                vertical: 7,
+              ),
+              decoration: BoxDecoration(
+                color:
+                    dangerColor.withValues(
+                  alpha: 0.12,
+                ),
+                borderRadius:
+                    BorderRadius.circular(18),
+              ),
+              child: Text(
+                sensorData.leakZone ??
+                    'Zone 2',
+                style: TextStyle(
+                  color: dangerColor,
+                  fontSize: 9,
+                  fontWeight:
+                      FontWeight.w800,
+                ),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildSystemInformation() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE6F3EB),
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'PIPE-SENSE SYSTEM',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.3,
-              color: Color(0xFF68766E),
-            ),
-          ),
-          const SizedBox(height: 14),
-          _infoRow(
-            Icons.water_drop_outlined,
-            'YF-S201',
-            'Inlet flow sensor',
-          ),
-          _infoRow(
-            Icons.water_drop_outlined,
-            'ZJ-S201',
-            'Outlet flow sensor',
-          ),
-          _infoRow(
-            Icons.graphic_eq_rounded,
-            'MPU6050 #1 / #2',
-            'Vibration monitoring',
-          ),
-          _infoRow(
-            Icons.location_on_outlined,
-            '3 zones',
-            'Approximate leak localization',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _infoRow(
-    IconData icon,
-    String title,
-    String subtitle,
+  Widget _build3DCard(
+    bool desktop,
   ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+    return Container(
+      width: double.infinity,
+      height: desktop ? 470 : 390,
+      clipBehavior:
+          Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius:
+            BorderRadius.circular(28),
+        border: Border.all(
+          color: borderColor,
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const ThreeSceneView(),
+
+          Positioned(
+            top: 15,
+            left: 15,
+            child: _badge(
+              Icons.view_in_ar_rounded,
+              'LIVE 3D MODEL',
+            ),
+          ),
+
+          Positioned(
+            top: 15,
+            right: 15,
+            child: _badge(
+              Icons.touch_app_rounded,
+              'Drag to rotate',
+            ),
+          ),
+
+          if (sensorData.leakDetected)
+            Positioned(
+              left: 15,
+              right: 15,
+              bottom: 15,
+              child: _leakBanner(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _badge(
+    IconData icon,
+    String text,
+  ) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: cardColor.withValues(
+          alpha: 0.90,
+        ),
+        borderRadius:
+            BorderRadius.circular(18),
+        border: Border.all(
+          color: borderColor,
+        ),
+      ),
       child: Row(
+        mainAxisSize:
+            MainAxisSize.min,
         children: [
           Icon(
             icon,
-            size: 21,
-            color: const Color(0xFF2C8F65),
+            size: 13,
+            color: accentColor,
           ),
-          const SizedBox(width: 13),
+          const SizedBox(width: 6),
           Text(
-            title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 14,
+            text,
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 9,
+              fontWeight:
+                  FontWeight.w700,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _leakBanner() {
+    return Container(
+      height: 48,
+      padding:
+          const EdgeInsets.symmetric(
+        horizontal: 16,
+      ),
+      decoration: BoxDecoration(
+        color: dangerColor,
+        borderRadius:
+            BorderRadius.circular(25),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.water_drop_rounded,
+            color: Colors.white,
+            size: 17,
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              subtitle,
+              '${sensorData.leakZone ?? 'Zone 2'} active',
               style: const TextStyle(
-                color: Color(0xFF78857E),
-                fontSize: 13,
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight:
+                    FontWeight.w800,
               ),
             ),
           ),
+          const Text(
+            'APPROX.',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 8,
+              fontWeight:
+                  FontWeight.w700,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildRefreshButton() {
-    return SizedBox(
-      height: 54,
-      child: ElevatedButton.icon(
-        onPressed: refreshSensorData,
-        icon: const Icon(Icons.refresh_rounded),
-        label: const Text(
-          'REFRESH SENSOR DATA',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.7,
+  // ============================================================
+  // SENSOR METRICS
+  // ============================================================
+
+  Widget _buildMetrics(
+    bool desktop,
+  ) {
+    if (desktop) {
+      return Row(
+        children: [
+          Expanded(
+            child: _metricCard(
+              Icons.water_drop_rounded,
+              'YF-S201',
+              sensorData.yfFlowRate,
+              'L/min',
+              waterColor,
+            ),
           ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _metricCard(
+              Icons.waterfall_chart_rounded,
+              'ZJ-S201',
+              sensorData.zjFlowRate,
+              'L/min',
+              accentColor,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _metricCard(
+              Icons.vibration_rounded,
+              'Vibration 1',
+              sensorData.vibration1,
+              'level',
+              accentColor,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _metricCard(
+              Icons.graphic_eq_rounded,
+              'Vibration 2',
+              sensorData.vibration2,
+              'level',
+              waterColor,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _metricCard(
+                Icons.water_drop_rounded,
+                'YF-S201',
+                sensorData.yfFlowRate,
+                'L/min',
+                waterColor,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _metricCard(
+                Icons.waterfall_chart_rounded,
+                'ZJ-S201',
+                sensorData.zjFlowRate,
+                'L/min',
+                accentColor,
+              ),
+            ),
+          ],
         ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF17251D),
-          foregroundColor: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _metricCard(
+                Icons.vibration_rounded,
+                'Vibration 1',
+                sensorData.vibration1,
+                'level',
+                accentColor,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _metricCard(
+                Icons.graphic_eq_rounded,
+                'Vibration 2',
+                sensorData.vibration2,
+                'level',
+                waterColor,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _metricCard(
+    IconData icon,
+    String title,
+    double value,
+    String unit,
+    Color color,
+  ) {
+    return Container(
+      height: 145,
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius:
+            BorderRadius.circular(21),
+        border: Border.all(
+          color: borderColor,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color:
+                      color.withValues(
+                    alpha: 0.12,
+                  ),
+                  borderRadius:
+                      BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  icon,
+                  color: color,
+                  size: 18,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                width: 6,
+                height: 6,
+                decoration:
+                    BoxDecoration(
+                  color: color,
+                  shape:
+                      BoxShape.circle,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Text(
+            title,
+            maxLines: 1,
+            overflow:
+                TextOverflow.ellipsis,
+            style: TextStyle(
+              color: secondaryText,
+              fontSize: 10,
+              fontWeight:
+                  FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment:
+                CrossAxisAlignment.end,
+            children: [
+              Text(
+                value.toStringAsFixed(1),
+                style: TextStyle(
+                  color: primaryText,
+                  fontSize: 23,
+                  fontWeight:
+                      FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                unit,
+                style: TextStyle(
+                  color: secondaryText,
+                  fontSize: 8,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // FLOW BALANCE
+  // ============================================================
+
+  Widget _buildFlowBalance() {
+    final double difference =
+        sensorData.yfFlowRate -
+            sensorData.zjFlowRate;
+
+    final bool anomaly =
+        difference.abs() >= 0.5;
+
+    double ratio = 0;
+
+    if (sensorData.yfFlowRate > 0) {
+      ratio =
+          sensorData.zjFlowRate /
+              sensorData.yfFlowRate;
+    }
+
+    ratio = ratio.clamp(
+      0.0,
+      1.0,
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius:
+            BorderRadius.circular(23),
+        border: Border.all(
+          color: borderColor,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Flow balance',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 16,
+                    fontWeight:
+                        FontWeight.w800,
+                  ),
+                ),
+              ),
+              Text(
+                anomaly
+                    ? 'ANOMALY'
+                    : 'BALANCED',
+                style: TextStyle(
+                  color: anomaly
+                      ? dangerColor
+                      : accentColor,
+                  fontSize: 9,
+                  fontWeight:
+                      FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 15),
+          ClipRRect(
+            borderRadius:
+                BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              minHeight: 8,
+              value: ratio,
+              backgroundColor:
+                  borderColor,
+              valueColor:
+                  AlwaysStoppedAnimation<
+                      Color>(
+                anomaly
+                    ? dangerColor
+                    : accentColor,
+              ),
+            ),
+          ),
+          const SizedBox(height: 9),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'IN  ${sensorData.yfFlowRate.toStringAsFixed(1)} L/min',
+                  style: TextStyle(
+                    color: secondaryText,
+                    fontSize: 9,
+                  ),
+                ),
+              ),
+              Text(
+                'OUT  ${sensorData.zjFlowRate.toStringAsFixed(1)} L/min',
+                style: TextStyle(
+                  color: secondaryText,
+                  fontSize: 9,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // LEAK ZONES
+  // IMPORTANT:
+  // These are DISPLAY ONLY.
+  // They cannot be clicked or manually selected.
+  // ============================================================
+
+  Widget _buildZonesPreview() {
+    return Column(
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Leak zones',
+                style: TextStyle(
+                  color: primaryText,
+                  fontSize: 18,
+                  fontWeight:
+                      FontWeight.w800,
+                ),
+              ),
+            ),
+            Text(
+              '3 ZONES',
+              style: TextStyle(
+                color: secondaryText,
+                fontSize: 9,
+                fontWeight:
+                    FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 11),
+        Row(
+          children: [
+            Expanded(
+              child: _zoneButton(
+                'Zone 1',
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: _zoneButton(
+                'Zone 2',
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: _zoneButton(
+                'Zone 3',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _zoneButton(
+    String zone,
+  ) {
+    final bool active =
+        sensorData.leakZone == zone;
+
+    return Container(
+      height: 75,
+      decoration: BoxDecoration(
+        color: active
+            ? dangerColor.withValues(
+                alpha: 0.10,
+              )
+            : cardColor,
+        borderRadius:
+            BorderRadius.circular(18),
+        border: Border.all(
+          color: active
+              ? dangerColor
+              : borderColor,
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment:
+            MainAxisAlignment.center,
+        children: [
+          Icon(
+            active
+                ? Icons.warning_rounded
+                : Icons.radio_button_unchecked,
+            color: active
+                ? dangerColor
+                : accentColor,
+            size: 19,
+          ),
+          const SizedBox(height: 5),
+          Text(
+            zone,
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 10,
+              fontWeight:
+                  FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // MONITOR PAGE
+  // ============================================================
+
+  Widget _buildMonitorPage() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(
+        20,
+        22,
+        20,
+        30,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints:
+              const BoxConstraints(
+            maxWidth: 1000,
+          ),
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              _pageHeader(
+                'Monitor',
+                'Live pipeline measurements',
+              ),
+              const SizedBox(height: 22),
+              _largeReading(
+                'YF-S201',
+                sensorData.yfFlowRate,
+                'L/min',
+                waterColor,
+              ),
+              const SizedBox(height: 12),
+              _largeReading(
+                'ZJ-S201',
+                sensorData.zjFlowRate,
+                'L/min',
+                accentColor,
+              ),
+              const SizedBox(height: 12),
+              _largeReading(
+                'Vibration 1',
+                sensorData.vibration1,
+                'level',
+                accentColor,
+              ),
+              const SizedBox(height: 12),
+              _largeReading(
+                'Vibration 2',
+                sensorData.vibration2,
+                'level',
+                waterColor,
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildBottomNavigation() {
+  Widget _largeReading(
+    String title,
+    double value,
+    String unit,
+    Color color,
+  ) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(
-        18,
-        0,
-        18,
-        14,
-      ),
-      padding: const EdgeInsets.symmetric(
-        horizontal: 8,
-        vertical: 8,
-      ),
+      width: double.infinity,
+      padding: const EdgeInsets.all(19),
       decoration: BoxDecoration(
-        color: const Color(0xFF10231A),
-        borderRadius: BorderRadius.circular(28),
+        color: cardColor,
+        borderRadius:
+            BorderRadius.circular(21),
+        border: Border.all(
+          color: borderColor,
+        ),
       ),
       child: Row(
         children: [
-          _navItem(
-            Icons.home_rounded,
-            'Home',
-            true,
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color:
+                  color.withValues(
+                alpha: 0.12,
+              ),
+              borderRadius:
+                  BorderRadius.circular(14),
+            ),
+            child: Icon(
+              Icons.analytics_rounded,
+              color: color,
+            ),
           ),
-          _navItem(
-            Icons.monitor_heart_rounded,
-            'Monitor',
-            false,
+          const SizedBox(width: 13),
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                color: primaryText,
+                fontWeight:
+                    FontWeight.w700,
+              ),
+            ),
           ),
-          _navItem(
-            Icons.account_tree_rounded,
-            'Zones',
-            false,
+          Text(
+            value.toStringAsFixed(1),
+            style: TextStyle(
+              color: primaryText,
+              fontSize: 24,
+              fontWeight:
+                  FontWeight.w800,
+            ),
           ),
-          _navItem(
-            Icons.settings_rounded,
-            'Settings',
-            false,
+          const SizedBox(width: 4),
+          Text(
+            unit,
+            style: TextStyle(
+              color: secondaryText,
+              fontSize: 9,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _navItem(
-    IconData icon,
-    String label,
-    bool selected,
+  // ============================================================
+  // ZONES PAGE
+  // IMPORTANT:
+  // These are DISPLAY ONLY.
+  // ============================================================
+
+  Widget _buildZonesPage() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(
+        20,
+        22,
+        20,
+        30,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints:
+              const BoxConstraints(
+            maxWidth: 900,
+          ),
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              _pageHeader(
+                'Leak Zones',
+                'Approximate localization',
+              ),
+              const SizedBox(height: 22),
+              _zoneDetail(
+                'Zone 1',
+              ),
+              const SizedBox(height: 12),
+              _zoneDetail(
+                'Zone 2',
+              ),
+              const SizedBox(height: 12),
+              _zoneDetail(
+                'Zone 3',
+              ),
+              const SizedBox(height: 20),
+              Center(
+                child: Text(
+                  'Localization is approximate and based on flow difference and vibration response.',
+                  textAlign:
+                      TextAlign.center,
+                  style: TextStyle(
+                    color: secondaryText,
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _zoneDetail(
+    String zone,
   ) {
-    return Expanded(
+    final bool active =
+        sensorData.leakZone == zone;
+
+    return Container(
+      width: double.infinity,
+      padding:
+          const EdgeInsets.all(19),
+      decoration: BoxDecoration(
+        color: active
+            ? dangerColor.withValues(
+                alpha: 0.08,
+              )
+            : cardColor,
+        borderRadius:
+            BorderRadius.circular(21),
+        border: Border.all(
+          color: active
+              ? dangerColor
+              : borderColor,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: (active
+                      ? dangerColor
+                      : accentColor)
+                  .withValues(
+                alpha: 0.12,
+              ),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              active
+                  ? Icons.warning_rounded
+                  : Icons.location_on_rounded,
+              color: active
+                  ? dangerColor
+                  : accentColor,
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
+              children: [
+                Text(
+                  zone,
+                  style: TextStyle(
+                    color: primaryText,
+                    fontWeight:
+                        FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  active
+                      ? 'Possible leak detected'
+                      : 'Monitoring active',
+                  style: TextStyle(
+                    color: secondaryText,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            active
+                ? Icons.warning_rounded
+                : Icons.circle_outlined,
+            color: active
+                ? dangerColor
+                : secondaryText,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // SETTINGS PAGE
+  // ============================================================
+
+  Widget _buildSettingsPage() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(
+        20,
+        22,
+        20,
+        30,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints:
+              const BoxConstraints(
+            maxWidth: 900,
+          ),
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              _pageHeader(
+                'Settings',
+                'Configure PIPE-SENSE',
+              ),
+              const SizedBox(height: 24),
+              _sectionLabel(
+                'OPERATING MODE',
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _modeCard(
+                      'Simulation',
+                      'Demo sensor data',
+                      Icons.science_rounded,
+                      true,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _modeCard(
+                      'ESP32',
+                      'Live hardware',
+                      Icons.memory_rounded,
+                      false,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 25),
+              _sectionLabel(
+                'APPEARANCE',
+              ),
+              const SizedBox(height: 10),
+              _appearanceSection(),
+              const SizedBox(height: 25),
+              _sectionLabel(
+                'SYSTEM',
+              ),
+              const SizedBox(height: 10),
+              _systemSection(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pageHeader(
+    String title,
+    String subtitle,
+  ) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment:
+                CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: primaryText,
+                  fontSize: 28,
+                  fontWeight:
+                      FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  color: secondaryText,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+        _buildThemeButton(),
+      ],
+    );
+  }
+
+  Widget _sectionLabel(
+    String text,
+  ) {
+    return Text(
+      text,
+      style: TextStyle(
+        color: secondaryText,
+        fontSize: 9,
+        fontWeight:
+            FontWeight.w800,
+        letterSpacing: 1.5,
+      ),
+    );
+  }
+
+  Widget _modeCard(
+    String title,
+    String subtitle,
+    IconData icon,
+    bool simulation,
+  ) {
+    final bool selected =
+        simulation
+            ? AppModeController.isSimulation
+            : AppModeController.isEsp32;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          AppModeController.setMode(
+            simulation
+                ? AppMode.simulation
+                : AppMode.esp32,
+          );
+        });
+
+        _refreshSensors();
+      },
       child: Container(
-        height: 50,
+        padding:
+            const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: selected
-              ? const Color(0xFF6BE3AA)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
+              ? accentColor.withValues(
+                  alpha: 0.10,
+                )
+              : cardColor,
+          borderRadius:
+              BorderRadius.circular(20),
+          border: Border.all(
+            color: selected
+                ? accentColor
+                : borderColor,
+          ),
         ),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
           children: [
             Icon(
               icon,
-              size: 20,
               color: selected
-                  ? const Color(0xFF10231A)
-                  : Colors.white60,
+                  ? accentColor
+                  : secondaryText,
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 13),
             Text(
-              label,
+              title,
               style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
+                color: primaryText,
+                fontWeight:
+                    FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              subtitle,
+              style: TextStyle(
+                color: secondaryText,
+                fontSize: 9,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment:
+                  Alignment.centerRight,
+              child: Icon(
+                selected
+                    ? Icons
+                        .check_circle_rounded
+                    : Icons
+                        .radio_button_unchecked,
                 color: selected
-                    ? const Color(0xFF10231A)
-                    : Colors.white60,
+                    ? accentColor
+                    : secondaryText,
+                size: 18,
               ),
             ),
           ],
@@ -975,35 +1475,211 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _pill({
-    required IconData icon,
-    required String text,
-  }) {
+  // ============================================================
+  // ONLY TWO THEMES
+  // DARK + LIGHT
+  // ============================================================
+
+  Widget _appearanceSection() {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 15,
-        vertical: 10,
-      ),
+      width: double.infinity,
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(22),
+        color: cardColor,
+        borderRadius:
+            BorderRadius.circular(22),
+        border: Border.all(
+          color: borderColor,
+        ),
+      ),
+      child: Column(
+        children: [
+          _themeOption(
+            'Dark',
+            true,
+          ),
+          _themeOption(
+            'Light',
+            false,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _themeOption(
+    String title,
+    bool dark,
+  ) {
+    final bool selected =
+        isDark == dark;
+
+    return GestureDetector(
+      onTap: () {
+        if (isDark != dark) {
+          _toggleTheme();
+        }
+      },
+      child: Container(
+        height: 54,
+        padding:
+            const EdgeInsets.symmetric(
+          horizontal: 12,
+        ),
+        decoration: BoxDecoration(
+          color: selected
+              ? accentColor.withValues(
+                  alpha: 0.08,
+                )
+              : Colors.transparent,
+          borderRadius:
+              BorderRadius.circular(15),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 24,
+              decoration: BoxDecoration(
+                color: dark
+                    ? const Color(
+                        0xFF07110D,
+                      )
+                    : const Color(
+                        0xFFF2F8F5,
+                      ),
+                borderRadius:
+                    BorderRadius.circular(7),
+                border: Border.all(
+                  color: dark
+                      ? const Color(
+                          0xFF36564A,
+                        )
+                      : const Color(
+                          0xFFD0E2DB,
+                        ),
+                ),
+              ),
+              child: Center(
+                child: Container(
+                  width: 14,
+                  height: 5,
+                  decoration:
+                      BoxDecoration(
+                    color: waterColor,
+                    borderRadius:
+                        BorderRadius.circular(5),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: primaryText,
+                  fontSize: 11,
+                  fontWeight:
+                      FontWeight.w600,
+                ),
+              ),
+            ),
+            Icon(
+              selected
+                  ? Icons
+                      .radio_button_checked
+                  : Icons
+                      .radio_button_unchecked,
+              color: selected
+                  ? accentColor
+                  : secondaryText,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // SYSTEM INFORMATION
+  // ============================================================
+
+  Widget _systemSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius:
+            BorderRadius.circular(22),
+        border: Border.all(
+          color: borderColor,
+        ),
+      ),
+      child: Column(
+        children: [
+          _systemRow(
+            'Controller',
+            'ESP32',
+          ),
+          _systemRow(
+            'Flow sensing',
+            'YF-S201 + ZJ-S201',
+          ),
+          _systemRow(
+            'Vibration',
+            '2 × MPU6050',
+          ),
+          _systemRow(
+            'Leak zones',
+            '3 zones',
+          ),
+          _systemRow(
+            'Localization',
+            'Approximate',
+          ),
+          _systemRow(
+            'Visualization',
+            'Three.js 3D',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _systemRow(
+    String label,
+    String value,
+  ) {
+    return Padding(
+      padding:
+          const EdgeInsets.symmetric(
+        vertical: 7,
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            icon,
-            size: 16,
-            color: const Color(0xFF34443B),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: secondaryText,
+                fontSize: 10,
+              ),
+            ),
           ),
-          const SizedBox(width: 7),
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.8,
-              color: Color(0xFF34443B),
+          Flexible(
+            child: Text(
+              value,
+              textAlign:
+                  TextAlign.right,
+              style: TextStyle(
+                color: primaryText,
+                fontSize: 10,
+                fontWeight:
+                    FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -1011,47 +1687,120 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _statusPill(bool leakDetected) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 17,
-        vertical: 12,
-      ),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 20,
-            color: Colors.black.withValues(alpha: 0.08),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            leakDetected
-                ? Icons.warning_rounded
-                : Icons.check_circle_rounded,
-            size: 19,
-            color: leakDetected
-                ? const Color(0xFFFF4F6D)
-                : const Color(0xFF2DCB83),
-          ),
-          const SizedBox(width: 9),
-          Text(
-            leakDetected
-                ? 'LEAK DETECTED'
-                : 'SYSTEM NORMAL',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.6,
-              color: Color(0xFF27342D),
+  // ============================================================
+  // BOTTOM NAVIGATION
+  // ============================================================
+
+  Widget _buildBottomNavigation() {
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin:
+            const EdgeInsets.fromLTRB(
+          18,
+          0,
+          18,
+          12,
+        ),
+        height: 70,
+        padding:
+            const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: isDark
+              ? const Color(0xFF0B2118)
+              : const Color(0xFF10291F),
+          borderRadius:
+              BorderRadius.circular(28),
+        ),
+        child: Row(
+          children: [
+            _navItem(
+              0,
+              Icons.home_rounded,
+              'Home',
             ),
+            _navItem(
+              1,
+              Icons.monitor_heart_rounded,
+              'Monitor',
+            ),
+            _navItem(
+              2,
+              Icons.account_tree_rounded,
+              'Zones',
+            ),
+            _navItem(
+              3,
+              Icons.settings_rounded,
+              'Settings',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _navItem(
+    int index,
+    IconData icon,
+    String label,
+  ) {
+    final bool selected =
+        selectedTab == index;
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            selectedTab = index;
+          });
+        },
+        child: Container(
+          margin:
+              const EdgeInsets.symmetric(
+            horizontal: 2,
           ),
-        ],
+          decoration: BoxDecoration(
+            color: selected
+                ? accentColor
+                : Colors.transparent,
+            borderRadius:
+                BorderRadius.circular(21),
+          ),
+          child: Column(
+            mainAxisAlignment:
+                MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                color: selected
+                    ? const Color(
+                        0xFF092016,
+                      )
+                    : const Color(
+                        0xFF9AAFA7,
+                      ),
+                size: 20,
+              ),
+              const SizedBox(height: 3),
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected
+                      ? const Color(
+                          0xFF092016,
+                        )
+                      : const Color(
+                          0xFF9AAFA7,
+                        ),
+                  fontSize: 9,
+                  fontWeight:
+                      FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

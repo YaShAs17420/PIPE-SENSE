@@ -1,59 +1,31 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order
-    for it to work correctly.
-  -->
-
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
 
   <meta
     name="description"
-    content="PIPE-SENSE - Interactive 3D Smart Water Leak Detection System"
-  >
-
-  <!-- Mobile web app -->
-  <meta
-    name="mobile-web-app-capable"
-    content="yes"
+    content="PIPE-SENSE Smart Water Monitoring"
   >
 
   <meta
-    name="apple-mobile-web-app-status-bar-style"
-    content="black"
+    name="theme-color"
+    content="#ffffff"
   >
 
-  <meta
-    name="apple-mobile-web-app-title"
-    content="PIPE-SENSE"
-  >
+  <title>PIPE-SENSE</title>
 
-  <!-- iOS icon -->
   <link
-    rel="apple-touch-icon"
-    href="icons/Icon-192.png"
-  >
-
-  <!-- Favicon -->
-  <link
-    rel="icon"
-    type="image/png"
-    href="favicon.png"
+    rel="manifest"
+    href="manifest.json"
   >
 
   <!--
-    ============================================================
-    THREE.JS IMPORT MAP
-    ============================================================
+    Three.js import map
+    Keep both entries on the SAME Three.js version.
   -->
-
   <script type="importmap">
   {
     "imports": {
@@ -64,50 +36,18 @@
   </script>
 
   <!--
-    Basic page styling
+    PIPE-SENSE Three.js scene
   -->
-
-  <style>
-    html,
-    body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-    }
-
-    body {
-      overflow: hidden;
-    }
-  </style>
-
-  <title>PIPE-SENSE</title>
-
-  <link
-    rel="manifest"
-    href="manifest.json"
-  >
-</head>
-
-<body>
-
-  <!--
-    Flutter Web bootstrap
-  -->
-
-  <script
-    src="flutter_bootstrap.js"
-    async
-  ></script>
-
-  <!--
-    PIPE-SENSE Three.js 3D scene
-  -->
-
   <script
     type="module"
     src="three/scene.js"
   ></script>
+
+</head>
+
+<body>
+
+  <script src="flutter_bootstrap.js" async></script>
 
 </body>
 </html>

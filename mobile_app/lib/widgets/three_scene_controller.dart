@@ -10,6 +10,16 @@ external void _updateSensorState(
   String? leakZone,
 );
 
+@JS('pipeSense3D.selectZone')
+external void _selectZone(
+  String zone,
+);
+
+@JS('pipeSense3D.setTheme')
+external void _setTheme(
+  String theme,
+);
+
 class ThreeSceneController {
   static void updateSensorState({
     required double yfFlowRate,
@@ -28,9 +38,24 @@ class ThreeSceneController {
         leakDetected,
         leakZone,
       );
-    } catch (_) {
-      // The Three.js scene may not have finished loading yet.
-      // The dashboard itself should continue working normally.
-    }
+    } catch (_) {}
+  }
+
+  static void selectZone(
+    String zone,
+  ) {
+    try {
+      _selectZone(zone);
+    } catch (_) {}
+  }
+
+  static void setTheme({
+    required bool dark,
+  }) {
+    try {
+      _setTheme(
+        dark ? 'dark' : 'light',
+      );
+    } catch (_) {}
   }
 }
