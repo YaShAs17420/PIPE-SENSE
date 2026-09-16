@@ -1,70 +1,94 @@
-import 'dart:math';
-
 import '../models/sensor_data.dart';
 import 'app_mode.dart';
 import 'esp32_service.dart';
-import 'leak_detection_service.dart';
 
 class SensorService {
-  static final Random _random = Random();
+  // Each simulation state remains visible for 10 seconds.
+  // The dashboard can still refresh every 5 seconds.
+  static const int _stateDurationSeconds = 10;
 
   static SensorData getSensorData() {
-    // Randomly select a test condition.
-    //
-    // 0 = Normal
-    // 1 = Normal
-    // 2 = Zone 1 leak
-    // 3 = Zone 2 leak
-    final int testCase = _random.nextInt(4);
-
-    double yfFlowRate;
-    double zjFlowRate;
-    double vibration1;
-    double vibration2;
-
-    if (testCase == 2) {
-      // ZONE 1 LEAK
-      yfFlowRate = 2.5 + _random.nextDouble() * 0.5;
-      zjFlowRate = 0.8 + _random.nextDouble() * 0.3;
-
-      vibration1 = 3.0 + _random.nextDouble() * 2.0;
-      vibration2 = 0.5 + _random.nextDouble() * 0.8;
-    } else if (testCase == 3) {
-      // ZONE 2 LEAK
-      yfFlowRate = 2.5 + _random.nextDouble() * 0.5;
-      zjFlowRate = 0.8 + _random.nextDouble() * 0.3;
-
-      vibration1 = 0.5 + _random.nextDouble() * 0.8;
-      vibration2 = 3.0 + _random.nextDouble() * 2.0;
-    } else {
-      // NORMAL CONDITION
-      yfFlowRate = 0.9 + _random.nextDouble() * 0.5;
-      zjFlowRate = 0.9 + _random.nextDouble() * 0.4;
-
-      vibration1 = 0.5 + _random.nextDouble() * 0.8;
-      vibration2 = 0.5 + _random.nextDouble() * 0.8;
+    if (AppModeController.isEsp32) {
+      return const SensorData(
+        yfFlowRate: 0,
+        zjFlowRate: 0,
+        vibration1: 0,
+        vibration2: 0,
+        leakDetected: false,
+      );
     }
 
-    final SensorData rawData = SensorData(
-      yfFlowRate: yfFlowRate,
-      zjFlowRate: zjFlowRate,
-      vibration1: vibration1,
-      vibration2: vibration2,
-      leakDetected: false,
-      leakZone: null,
-    );
-
-    // Send the simulated sensor readings through
-    // the same detection logic that will later be
-    // used with the real ESP32.
-    return LeakDetectionService.analyze(rawData);
+    return _simulationData();
   }
 
   static Future<SensorData?> getCurrentSensorData() async {
-    if (AppModeController.isSimulation) {
-      return getSensorData();
+    if (AppModeController.isEsp32) {
+      return Esp32Service.getSensorData();
     }
 
-    return await Esp32Service.getSensorData();
+    return _simulationData();
+  }
+
+  static SensorData _simulationData() {
+    final int state =
+        (DateTime.now().millisecondsSinceEpoch ~/ 1000) ~/
+            _stateDurationSeconds %
+        4;
+
+    switch (state) {
+      // NORMAL
+      case 0:
+        return const SensorData(
+          yfFlowRate: 2.6,
+          zjFlowRate: 2.5,
+          vibration1: 1.0,
+          vibration2: 1.1,
+          leakDetected: false,
+          leakZone: null,
+        );
+
+      // ZONE 1
+      case 1:
+        return const SensorData(
+          yfFlowRate: 2.9,
+          zjFlowRate: 1.6,
+          vibration1: 4.5,
+          vibration2: 1.0,
+          leakDetected: true,
+          leakZone: 'Zone 1',
+        );
+
+      // ZONE 2
+      case 2:
+        return const SensorData(
+          yfFlowRate: 3.0,
+          zjFlowRate: 1.4,
+          vibration1: 4.3,
+          vibration2: 4.2,
+          leakDetected: true,
+          leakZone: 'Zone 2',
+        );
+
+      // ZONE 3
+      case 3:
+        return const SensorData(
+          yfFlowRate: 2.9,
+          zjFlowRate: 1.0,
+          vibration1: 1.0,
+          vibration2: 4.6,
+          leakDetected: true,
+          leakZone: 'Zone 3',
+        );
+
+      default:
+        return const SensorData(
+          yfFlowRate: 2.6,
+          zjFlowRate: 2.5,
+          vibration1: 1.0,
+          vibration2: 1.1,
+          leakDetected: false,
+          leakZone: null,
+        );
+    }
   }
 }

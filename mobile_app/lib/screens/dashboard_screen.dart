@@ -26,6 +26,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Timer? sensorTimer;
 
+  // --------------------------------------------------
+  // ESP32 CONNECTION STATE
+  // --------------------------------------------------
+
+  bool esp32Connected = false;
+
   SensorData sensorData = const SensorData(
     yfFlowRate: 2.6,
     zjFlowRate: 2.5,
@@ -57,12 +63,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _refreshSensors() async {
+    final bool isEsp32Mode = AppModeController.isEsp32;
+
     final SensorData? data =
         await SensorService.getCurrentSensorData();
 
-    if (!mounted || data == null) {
+    if (!mounted) {
       return;
     }
+
+    // --------------------------------------------------
+    // ESP32 CONNECTION STATUS
+    // --------------------------------------------------
+
+    if (isEsp32Mode) {
+      if (data == null) {
+        setState(() {
+          esp32Connected = false;
+        });
+
+        return;
+      }
+
+      setState(() {
+        esp32Connected = true;
+      });
+    } else {
+      // Simulation does not depend on ESP32.
+      setState(() {
+        esp32Connected = false;
+      });
+    }
+
+    // --------------------------------------------------
+    // NO DATA
+    // --------------------------------------------------
+
+    if (data == null) {
+      return;
+    }
+
+    // --------------------------------------------------
+    // LEAK DETECTION
+    // --------------------------------------------------
 
     final SensorData result =
         LeakDetectionService.analyze(data);
@@ -70,6 +113,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() {
       sensorData = result;
     });
+
+    // --------------------------------------------------
+    // UPDATE THREE.JS
+    // --------------------------------------------------
 
     ThreeSceneController.updateSensorState(
       yfFlowRate: result.yfFlowRate,
@@ -84,7 +131,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       dark: isDark,
     );
   }
-
   void _toggleTheme() {
     setState(() {
       isDark = !isDark;
@@ -224,66 +270,143 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildHeader() {
-    return Row(
-      children: [
-        Container(
-          width: 54,
-          height: 54,
-          decoration: BoxDecoration(
-            color: accentColor.withValues(
-              alpha: 0.14,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool compact = constraints.maxWidth < 360;
+
+        return Row(
+          children: [
+            Container(
+              width: compact ? 46 : 54,
+              height: compact ? 46 : 54,
+              decoration: BoxDecoration(
+                color: accentColor.withValues(
+                  alpha: 0.14,
+                ),
+                borderRadius:
+                    BorderRadius.circular(
+                  compact ? 14 : 17,
+                ),
+              ),
+              child: Icon(
+                Icons.water_drop_rounded,
+                color: accentColor,
+                size: compact ? 24 : 29,
+              ),
             ),
-            borderRadius:
-                BorderRadius.circular(17),
-          ),
-          child: Icon(
-            Icons.water_drop_rounded,
-            color: accentColor,
-            size: 29,
-          ),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
-            children: [
-              Text(
-                'PIPE-SENSE',
-                maxLines: 1,
-                overflow:
-                    TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: primaryText,
-                  fontSize: 27,
-                  fontWeight:
-                      FontWeight.w800,
-                  letterSpacing: -0.7,
-                ),
+            SizedBox(width: compact ? 9 : 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'PIPE-SENSE',
+                    maxLines: 1,
+                    overflow:
+                        TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: compact ? 22 : 27,
+                      fontWeight:
+                          FontWeight.w800,
+                      letterSpacing: -0.7,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'SMART WATER MONITORING',
+                    maxLines: 1,
+                    overflow:
+                        TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 8,
+                      fontWeight:
+                          FontWeight.w700,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 3),
-              Text(
-                'SMART WATER MONITORING',
-                maxLines: 1,
-                overflow:
-                    TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: secondaryText,
-                  fontSize: 10,
-                  fontWeight:
-                      FontWeight.w700,
-                  letterSpacing: 1.2,
-                ),
-              ),
+            ),
+            if (!compact) ...[
+              const SizedBox(width: 8),
+              _buildConnectionBadge(),
             ],
-          ),
-        ),
-        const SizedBox(width: 10),
-        _buildThemeButton(),
-      ],
+            SizedBox(width: compact ? 6 : 8),
+            _buildThemeButton(),
+          ],
+        );
+      },
     );
   }
 
+  // ============================================================
+  // CONNECTION BADGE
+  // ============================================================
+
+  Widget _buildConnectionBadge() {
+    final bool simulation =
+        AppModeController.isSimulation;
+
+    final bool connected =
+        AppModeController.isEsp32 &&
+        esp32Connected;
+
+    final Color statusColor = simulation
+        ? accentColor
+        : connected
+            ? accentColor
+            : dangerColor;
+
+    final String statusText = simulation
+        ? 'SIMULATION'
+        : connected
+            ? 'ESP32 CONNECTED'
+            : 'ESP32 OFFLINE';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: statusColor.withValues(
+          alpha: 0.10,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: statusColor.withValues(
+            alpha: 0.35,
+          ),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(
+              color: statusColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            statusText,
+            style: TextStyle(
+              color: statusColor,
+              fontSize: 8,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   Widget _buildThemeButton() {
     return GestureDetector(
       onTap: _toggleTheme,
@@ -737,28 +860,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
           const SizedBox(height: 4),
-          Row(
-            crossAxisAlignment:
-                CrossAxisAlignment.end,
-            children: [
-              Text(
-                value.toStringAsFixed(1),
-                style: TextStyle(
-                  color: primaryText,
-                  fontSize: 23,
-                  fontWeight:
-                      FontWeight.w800,
-                ),
+          SizedBox(
+            width: double.infinity,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment:
+                    CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    value.toStringAsFixed(1),
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: 23,
+                      fontWeight:
+                          FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    unit,
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 8,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 4),
-              Text(
-                unit,
-                style: TextStyle(
-                  color: secondaryText,
-                  fontSize: 8,
-                ),
-              ),
-            ],
+            ),
           ),
         ],
       ),
@@ -998,7 +1129,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       padding: const EdgeInsets.fromLTRB(
         20,
         22,
-        20,
+20,
         30,
       ),
       child: Center(
@@ -1339,38 +1470,55 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String title,
     String subtitle,
   ) {
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  color: primaryText,
-                  fontSize: 28,
-                  fontWeight:
-                      FontWeight.w800,
-                ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool compact =
+            constraints.maxWidth < 360;
+
+        return Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow:
+                        TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: primaryText,
+                      fontSize: compact ? 24 : 28,
+                      fontWeight:
+                          FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow:
+                        TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: secondaryText,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  color: secondaryText,
-                  fontSize: 11,
-                ),
-              ),
+            ),
+            if (!compact) ...[
+              const SizedBox(width: 8),
+              _buildConnectionBadge(),
             ],
-          ),
-        ),
-        _buildThemeButton(),
-      ],
+            const SizedBox(width: 8),
+            _buildThemeButton(),
+          ],
+        );
+      },
     );
   }
-
   Widget _sectionLabel(
     String text,
   ) {
@@ -1405,6 +1553,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ? AppMode.simulation
                 : AppMode.esp32,
           );
+
+          esp32Connected = false;
         });
 
         _refreshSensors();
