@@ -1,17 +1,11 @@
 class Esp32Config {
-  // --------------------------------------------------
-  // CURRENTLY: Mock ESP32 server running on this PC
-  // --------------------------------------------------
-  static const String baseUrl = 'http://127.0.0.1:5000';
+  // Current ESP32 IP address on the Windows Mobile Hotspot
+  static const String esp32Ip = '192.168.137.78';
 
-  // --------------------------------------------------
-  // TOMORROW: Real ESP32
-  // Example:
-  //
-  // static const String baseUrl = 'http://192.168.4.1';
-  //
-  // --------------------------------------------------
+  // ESP32 HTTP server
+  static const String baseUrl = 'http://$esp32Ip';
 
+  // Sensor data endpoint
   static const String dataEndpoint = '/data';
 
   static String get dataUrl => '$baseUrl$dataEndpoint';

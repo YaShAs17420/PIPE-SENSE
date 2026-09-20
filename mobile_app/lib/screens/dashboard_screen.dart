@@ -49,7 +49,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     sensorTimer = Timer.periodic(
-      const Duration(seconds: 5),
+      const Duration(seconds: 1),
       (_) {
         _refreshSensors();
       },
@@ -499,7 +499,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 5),
                 Text(
                   leak
-                      ? '${sensorData.leakZone ?? 'Zone 2'} requires attention'
+                      ? (sensorData.leakZone != null
+                          ? '${sensorData.leakZone} requires attention'
+                          : 'Leak detected — location not determined yet')
                       : 'Pipeline flow and vibration are within normal range',
                   maxLines: 2,
                   overflow:
@@ -531,7 +533,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               child: Text(
                 sensorData.leakZone ??
-                    'Zone 2',
+                    'LOCATION PENDING',
                 style: TextStyle(
                   color: dangerColor,
                   fontSize: 9,
@@ -663,7 +665,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '${sensorData.leakZone ?? 'Zone 2'} active',
+              sensorData.leakZone != null
+                  ? '${sensorData.leakZone} active'
+                  : 'Leak detected — location pending',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 11,
