@@ -1,73 +1,107 @@
+
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/sensor_data.dart';
 import 'esp32_config.dart';
 import 'leak_detection_service.dart';
 
+enum Esp32ConnectionStatus {
+  connecting,
+  connected,
+  disconnected,
+}
+
 class Esp32Service {
-  static Future<SensorData?> getSensorData() async {
+  static Esp32ConnectionStatus _connectionStatus =
+      Esp32ConnectionStatus.disconnected;
+
+  static Esp32ConnectionStatus get connectionStatus =>
+      _connectionStatus;
+
+  static bool get isConnected =>
+      _connectionStatus == Esp32ConnectionStatus.connected;
+
+  static bool get isConnecting =>
+      _connectionStatus == Esp32ConnectionStatus.connecting;
+
+  static const int _failuresBeforeDisconnect = 3;
+  static const Duration _requestTimeout = Duration(seconds: 3);
+
+  static int _consecutiveFailures = 0;
+  static Future<SensorData?>? _inFlightRequest;
+
+  static Future<SensorData?> getSensorData() {
+    final existingRequest = _inFlightRequest;
+
+    if (existingRequest != null) {
+      return existingRequest;
+    }
+
+    final request = _fetchSensorData();
+    _inFlightRequest = request;
+
+    return request.whenComplete(() {
+      if (identical(_inFlightRequest, request)) {
+        _inFlightRequest = null;
+      }
+    });
+  }
+
+  static Future<SensorData?> _fetchSensorData() async {
+    if (_connectionStatus != Esp32ConnectionStatus.connected) {
+      _connectionStatus = Esp32ConnectionStatus.connecting;
+    }
+
     try {
-      final String url =
-          '${Esp32Config.dataUrl}?t=${DateTime.now().millisecondsSinceEpoch}';
-
-      print('PIPE-SENSE: Connecting to ESP32...');
-      print('PIPE-SENSE: $url');
-
-      final response = await http
-          .get(
-            Uri.parse(url),
-          )
-          .timeout(
-            const Duration(seconds: 3),
-          );
-
-      print(
-        'PIPE-SENSE: ESP32 response status = ${response.statusCode}',
+      final uri = Uri.parse(Esp32Config.dataUrl).replace(
+        queryParameters: {
+          't': DateTime.now().millisecondsSinceEpoch.toString(),
+        },
       );
+
+      debugPrint('PIPE-SENSE: Requesting ESP32 sensor data: $uri');
+
+      // Do not add custom request headers here.
+      // Custom headers can trigger a browser CORS preflight.
+      final response = await http
+          .get(uri)
+          .timeout(_requestTimeout);
 
       if (response.statusCode != 200) {
-        print(
-          'PIPE-SENSE: ESP32 returned status ${response.statusCode}',
+        return _recordFailure(
+          'HTTP status ${response.statusCode}',
         );
-
-        return null;
       }
 
-      print(
-        'PIPE-SENSE: ESP32 response = ${response.body}',
-      );
+      final dynamic decoded = jsonDecode(response.body);
 
-      final dynamic data = jsonDecode(response.body);
-
-      if (data is! Map<String, dynamic>) {
-        print('PIPE-SENSE: Invalid JSON format received.');
-
-        return null;
+      if (decoded is! Map<String, dynamic>) {
+        return _recordFailure('Invalid JSON response');
       }
 
-      // ------------------------------------------------------
-      // READ SENSOR VALUES FROM ESP32
-      // ------------------------------------------------------
+      final double? yfFlowRate =
+          _tryToDouble(decoded['yfFlowRate']);
+      final double? zjFlowRate =
+          _tryToDouble(decoded['zjFlowRate']);
+      final double? vibration1 =
+          _tryToDouble(decoded['vibration1']);
+      final double? vibration2 =
+          _tryToDouble(decoded['vibration2']);
 
-      final double yfFlowRate =
-          _toDouble(data['yfFlowRate']);
+      if (yfFlowRate == null ||
+          zjFlowRate == null ||
+          vibration1 == null ||
+          vibration2 == null) {
+        return _recordFailure(
+          'Missing or invalid sensor values',
+        );
+      }
 
-      final double zjFlowRate =
-          _toDouble(data['zjFlowRate']);
-
-      final double vibration1 =
-          _toDouble(data['vibration1']);
-
-      final double vibration2 =
-          _toDouble(data['vibration2']);
-
-      // ------------------------------------------------------
-      // CREATE RAW SENSOR DATA
-      // ------------------------------------------------------
-
-      final SensorData rawData = SensorData(
+      final rawData = SensorData(
         yfFlowRate: yfFlowRate,
         zjFlowRate: zjFlowRate,
         vibration1: vibration1,
@@ -76,49 +110,57 @@ class Esp32Service {
         leakZone: null,
       );
 
-      // ------------------------------------------------------
-      // RUN LEAK DETECTION
-      // ------------------------------------------------------
+      final processedData = LeakDetectionService.analyze(rawData);
 
-      final SensorData processedData =
-          LeakDetectionService.analyze(rawData);
+      _consecutiveFailures = 0;
+      _connectionStatus = Esp32ConnectionStatus.connected;
 
-      print(
-        'PIPE-SENSE: '
+      debugPrint(
+        'PIPE-SENSE: Connected | '
         'YF=${processedData.yfFlowRate.toStringAsFixed(2)} L/min | '
         'ZJ=${processedData.zjFlowRate.toStringAsFixed(2)} L/min | '
         'V1=${processedData.vibration1.toStringAsFixed(2)} | '
-        'V2=${processedData.vibration2.toStringAsFixed(2)} | '
-        'Leak=${processedData.leakDetected} | '
-        'Zone=${processedData.leakZone ?? "None"}',
+        'V2=${processedData.vibration2.toStringAsFixed(2)}',
       );
 
       return processedData;
-    } catch (e) {
-      print(
-        'PIPE-SENSE: ESP32 connection error: $e',
-      );
-
-      return null;
+    } catch (error) {
+      return _recordFailure('Request failed: $error');
     }
   }
 
-  // ----------------------------------------------------------
-  // SAFE NUMBER CONVERSION
-  // ----------------------------------------------------------
+  static SensorData? _recordFailure(String reason) {
+    _consecutiveFailures++;
 
-  static double _toDouble(dynamic value) {
-    if (value == null) {
-      return 0.0;
+    debugPrint(
+      'PIPE-SENSE: $reason '
+      '($_consecutiveFailures/$_failuresBeforeDisconnect failures)',
+    );
+
+    if (_consecutiveFailures >= _failuresBeforeDisconnect) {
+      _connectionStatus = Esp32ConnectionStatus.disconnected;
+    } else if (_connectionStatus !=
+        Esp32ConnectionStatus.connected) {
+      _connectionStatus = Esp32ConnectionStatus.connecting;
     }
 
+    return null;
+  }
+
+  static double? _tryToDouble(dynamic value) {
     if (value is num) {
-      return value.toDouble();
+      final result = value.toDouble();
+      return result.isFinite ? result : null;
     }
 
-    return double.tryParse(
-          value.toString(),
-        ) ??
-        0.0;
+    if (value is String) {
+      final result = double.tryParse(value);
+
+      if (result != null && result.isFinite) {
+        return result;
+      }
+    }
+
+    return null;
   }
 }
