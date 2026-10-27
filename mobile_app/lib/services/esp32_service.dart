@@ -7,7 +7,6 @@ import 'package:http/http.dart' as http;
 
 import '../models/sensor_data.dart';
 import 'esp32_config.dart';
-import 'leak_detection_service.dart';
 
 enum Esp32ConnectionStatus {
   connecting,
@@ -63,13 +62,12 @@ class Esp32Service {
         },
       );
 
-      debugPrint('PIPE-SENSE: Requesting ESP32 sensor data: $uri');
+      debugPrint(
+        'PIPE-SENSE: Requesting ESP32 sensor data: $uri',
+      );
 
-      // Do not add custom request headers here.
-      // Custom headers can trigger a browser CORS preflight.
-      final response = await http
-          .get(uri)
-          .timeout(_requestTimeout);
+      // Avoid custom headers that may trigger browser CORS preflight.
+      final response = await http.get(uri).timeout(_requestTimeout);
 
       if (response.statusCode != 200) {
         return _recordFailure(
@@ -101,29 +99,53 @@ class Esp32Service {
         );
       }
 
-      final rawData = SensorData(
+      // The ESP32 firmware is the source of truth for leak detection.
+      // Do not run LeakDetectionService.analyze() on hardware readings.
+      final bool? leakDetected =
+          _tryToBool(decoded['leakDetected']);
+
+      final dynamic rawZone = decoded['leakZone'];
+      final String? leakZone = rawZone is String &&
+              rawZone.trim().isNotEmpty &&
+              rawZone.toUpperCase() != 'NONE'
+          ? rawZone.trim()
+          : null;
+
+      if (leakDetected == null) {
+        return _recordFailure(
+          'Missing or invalid leakDetected value from ESP32',
+        );
+      }
+
+      if (leakDetected && leakZone == null) {
+        return _recordFailure(
+          'ESP32 reports a leak but no leak zone',
+        );
+      }
+
+      final sensorData = SensorData(
         yfFlowRate: yfFlowRate,
         zjFlowRate: zjFlowRate,
         vibration1: vibration1,
         vibration2: vibration2,
-        leakDetected: false,
-        leakZone: null,
+        leakDetected: leakDetected,
+        leakZone: leakDetected ? leakZone : null,
       );
-
-      final processedData = LeakDetectionService.analyze(rawData);
 
       _consecutiveFailures = 0;
       _connectionStatus = Esp32ConnectionStatus.connected;
 
       debugPrint(
-        'PIPE-SENSE: Connected | '
-        'YF=${processedData.yfFlowRate.toStringAsFixed(2)} L/min | '
-        'ZJ=${processedData.zjFlowRate.toStringAsFixed(2)} L/min | '
-        'V1=${processedData.vibration1.toStringAsFixed(2)} | '
-        'V2=${processedData.vibration2.toStringAsFixed(2)}',
+        'PIPE-SENSE: ESP32 connected | '
+        'YF=${yfFlowRate.toStringAsFixed(2)} L/min | '
+        'ZJ=${zjFlowRate.toStringAsFixed(2)} L/min | '
+        'V1=${vibration1.toStringAsFixed(4)} | '
+        'V2=${vibration2.toStringAsFixed(4)} | '
+        'Leak=$leakDetected | '
+        'Zone=${leakZone ?? "NONE"}',
       );
 
-      return processedData;
+      return sensorData;
     } catch (error) {
       return _recordFailure('Request failed: $error');
     }
@@ -158,6 +180,30 @@ class Esp32Service {
 
       if (result != null && result.isFinite) {
         return result;
+      }
+    }
+
+    return null;
+  }
+
+  static bool? _tryToBool(dynamic value) {
+    if (value is bool) {
+      return value;
+    }
+
+    if (value is num) {
+      if (value == 1) return true;
+      if (value == 0) return false;
+    }
+
+    if (value is String) {
+      switch (value.trim().toLowerCase()) {
+        case 'true':
+        case '1':
+          return true;
+        case 'false':
+        case '0':
+          return false;
       }
     }
 
